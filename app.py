@@ -3,6 +3,23 @@ from langchain_openai import ChatOpenAI
 from agents import DataAgent, AnalysisAgent, ReportAgent
 from config import OPENAI_API_KEY, NEWS_API_KEY
 
+# app.py (add near top)
+import yfinance as yf
+import pandas as pd
+import matplotlib.pyplot as plt
+
+def price_chart(symbol):
+    hist = yf.Ticker(symbol).history(period="6mo")
+    if hist.empty:
+        st.info("No price data available.")
+        return
+    fig, ax = plt.subplots()
+    hist["Close"].plot(ax=ax)
+    ax.set_title(f"{symbol} – 6M Close")
+    ax.set_xlabel("Date"); ax.set_ylabel("Price")
+    st.pyplot(fig)
+
+
 # Page config
 st.set_page_config(page_title="Investment Research Agent", page_icon="📈")
 
@@ -42,6 +59,32 @@ def main():
             st.subheader("Executive Summary")
             st.info(report['summary'])
             
+            # After "Executive Summary" block
+            st.subheader("Price Chart")
+            price_chart(symbol)
+
+            # Show multi-article chain
+            st.subheader("News Chain (Ingest → Preprocess → Classify → Extract → Summarize)")
+            st.write(f"**Articles ({news_data['news_count']}):**")
+            for i, t in enumerate(news_data["news"], 1):
+                st.write(f"{i}. {t}")
+            st.write("**Per-item classifications:**", news_data.get("per_item_classifications", []))
+            st.write("**Key infos:**", [k[:140] for k in news_data.get("key_info", [])])
+            st.write("**Aggregate sentiment:**", news_data["classification"])
+            st.info(f"**Summary:** {news_data['summary']}")
+
+            # Routing + Eval/Optimize visibility
+            st.subheader("Routing & Evaluator–Optimizer")
+            st.write("**Routed to:**", analysis['routed_to'])
+            st.write("**Initial analysis:**", analysis['initial_analysis'])
+            st.write("**Evaluation:**", analysis['optimized_analysis'].get('evaluation', '')[:250])
+            st.write("**Optimized analysis:**", analysis['optimized_analysis'].get('final'))
+
+            # Memory
+            if 'memory' in locals() or 'memory' in report:
+                pass  # orchestrator path returns memory; in this app you wire orchestrator later if you use it
+
+
             # Three columns for main info
             col1, col2, col3 = st.columns(3)
             
