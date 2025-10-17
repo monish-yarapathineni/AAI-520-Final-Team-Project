@@ -77,8 +77,25 @@ def main():
             st.subheader("Routing & Evaluator–Optimizer")
             st.write("**Routed to:**", analysis['routed_to'])
             st.write("**Initial analysis:**", analysis['initial_analysis'])
-            st.write("**Evaluation:**", analysis['optimized_analysis'].get('evaluation', '')[:250])
-            st.write("**Optimized analysis:**", analysis['optimized_analysis'].get('final'))
+            opt = analysis.get("optimized_analysis", {})
+            st.write("Evaluation:", opt.get("evaluation", ""))
+
+            final_opt = opt.get("final", {})
+            refined_text = final_opt.get("refined_text") if isinstance(final_opt, dict) else None
+
+            if refined_text:
+                st.info(refined_text)   # show once, nicely
+            else:
+                st.json(final_opt)      # or st.write(...) if it’s plain text
+
+
+
+            # Show refined text when present
+            if isinstance(final_opt, dict) and "refined_text" in final_opt:
+                st.info(final_opt["refined_text"])
+            else:
+                st.write(final_opt)
+
 
             # Memory
             if 'memory' in locals() or 'memory' in report:
@@ -136,6 +153,10 @@ def main():
                 st.write("\n**4. Self-Reflection:**")
                 st.write(f"• Data Quality: {stock_data['reflection']}")
                 st.write(f"• Report Score: {report['quality_score']}/10")
+
+            with st.expander("🧾 Full Report JSON"):
+                st.json(report)
+                st.json(stock_data)
             
         except Exception as e:
             st.error(f"Error: {str(e)}")

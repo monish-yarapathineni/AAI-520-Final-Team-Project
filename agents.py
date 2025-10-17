@@ -1,6 +1,8 @@
 import yfinance as yf
 import requests
 from datetime import datetime, timedelta
+from typing import Optional
+
 from langchain_openai import ChatOpenAI
 from config import NEWS_API_KEY
 # agents.py (add near imports)
@@ -156,39 +158,69 @@ class AnalysisAgent:
         self.llm = llm
     
     # In agents.py, inside class AnalysisAgent
-    def evaluate(self, analysis: dict) -> str:
+    def evaluate(self, analysis: dict,
+    stock_data: Optional[dict] = None,
+    news_data: Optional[dict] = None,) -> str:
         """
-        LLM-based evaluator that rates the analysis and suggests improvements.
-        Returns a short text like: 'Score: 7/10. Feedback: ...'
+        Evaluates analysis quality (1–10) with concrete improvement tips.
+        Includes stock_data and news_data so feedback isn't only about P/E.
+        Returns: 'Score: X/10. Feedback: ...'
         """
         try:
-            prompt = (
-                "Rate the following analysis for clarity, use of evidence, and actionability "
-                "(score 1–10). Then give one or two concrete improvements.\n\n"
-                f"Analysis: {analysis}\n\n"
-                "Respond as: 'Score: X/10. Feedback: ...'"
-            )
-            return self.llm.invoke(prompt).content[:500]
-        except Exception as e:
-            return f"Score: 0/10. Feedback: evaluator error: {e}"
+            ctx = {
+                "analysis": analysis,
+                "stock_data": stock_data or {},
+                "news_sentiment": (news_data or {}).get("classification", "neutral"),
+            }
+            prompt = f"""
+            Evaluate the following investment analysis for depth, reasoning, and use of evidence.
+            Rate 1–10 and provide 2–3 specific improvements.
 
-    def refine(self, analysis: dict, evaluation_feedback: str) -> dict:
+            Context:
+            {ctx}
+
+            Respond as:
+            'Score: X/10. Feedback: ...'
+            """
+            return self.llm.invoke(prompt).content.strip()[:800]
+
+        except Exception as e:
+            return f"Score: 0/10. Feedback: Evaluation failed — {e}"
+
+
+
+    def refine(
+    self,
+    analysis: dict,
+    evaluation_feedback: str,
+    stock_data: Optional[dict] = None,
+    news_data: Optional[dict] = None,) -> dict:
+
         """
-        Applies the feedback to produce an improved analysis. Keeps output concise and structured.
+        Produces an improved, enriched analysis dict (type, valuation, rationale, considerations).
+        Uses evaluation feedback + available stock/news context.
         """
         try:
-            prompt = (
-                "You are a portfolio PM. Improve the analysis below using the feedback. "
-                "Return a concise JSON-like dict with the same keys, adding 'rationale' if helpful.\n\n"
-                f"Original analysis: {analysis}\n\n"
-                f"Feedback: {evaluation_feedback}\n\n"
-                "Improved analysis:"
-            )
+            prompt = f"""
+            You are a buy-side analyst. Improve the analysis by incorporating concrete reasoning that
+            references the provided metrics and sentiment. Keep it concise but decision-useful.
+
+            Current analysis: {analysis}
+            Stock data: {stock_data}
+            News sentiment: {(news_data or {}).get("classification", "neutral")}
+            Feedback: {evaluation_feedback}
+
+            Return a compact JSON-like dict with keys:
+            - type (same as input)
+            - valuation (same as or updated if warranted)
+            - rationale (2–3 sentences weaving in metrics/sentiment/peers)
+            - considerations (bullet-like short list: e.g., ['peer PE ~X', 'watch guidance', 'macro rates risk'])
+            """
             improved = self.llm.invoke(prompt).content.strip()[:1200]
-            return {"refined": improved, "based_on": analysis}
+            # We keep the model's JSON-like text as-is to avoid brittle parsing.
+            return {"refined_text": improved}
         except Exception as e:
-            # Fall back to the original if refinement fails
-            return {"refined": "Refinement failed, returning original.", "error": str(e), "based_on": analysis}
+            return {"refined_text": f"Refinement failed: {e}"}
 
     
     # agents.py (inside AnalysisAgent)
@@ -213,26 +245,20 @@ class AnalysisAgent:
         analysis["news_sentiment"] = news_data.get("classification", "neutral")
 
         # Evaluator → Optimizer loop
-        evaluation = self.evaluate(analysis)
-        # try to parse a score; if low, refine
-        try:
-            score_digits = "".join(ch for ch in evaluation if ch.isdigit())
-            score = int(score_digits[:2]) if score_digits else 0
-        except Exception:
-            score = 0
+        import re
+
+        evaluation = self.evaluate(analysis, stock_data, news_data)
+        m = re.search(r"Score:\s*(\d{1,2})\s*/\s*10", evaluation)
+        score = int(m.group(1)) if m else 0
 
         optimized = analysis
-        if score < 7:
-            optimized = self.refine(analysis, evaluation)
-
+        if score < 8:
+            optimized = self.refine(analysis, evaluation, stock_data, news_data)
 
         return {
             "routed_to": route,
             "initial_analysis": analysis,
-            "optimized_analysis": {
-                "evaluation": evaluation,
-                "final": optimized
-            }
+            "optimized_analysis": {"evaluation": evaluation, "final": optimized}
         }
 
     def _route_by_content(self, news_data, stock_data):
@@ -279,13 +305,13 @@ class AnalysisAgent:
         chg = data.get("change", 0)
         return {"type": "macro", "beta_hint": "Potential macro sensitivity; monitor rates/newsflow", "recent_change": chg}
 
-    def refine(self, analysis, evaluation_feedback):
-        prompt = f"""You are a portfolio PM. Improve this analysis using the feedback.
-        Analysis: {analysis}
-        Feedback: {evaluation_feedback}
-        Return the improved analysis as a concise JSON-like dict with the same keys."""
-        improved = self.llm.invoke(prompt).content[:800]
-        return {"refined": improved, "based_on": analysis}
+    # def refine(self, analysis, evaluation_feedback):
+    #     prompt = f"""You are a portfolio PM. Improve this analysis using the feedback.
+    #     Analysis: {analysis}
+    #     Feedback: {evaluation_feedback}
+    #     Return the improved analysis as a concise JSON-like dict with the same keys."""
+    #     improved = self.llm.invoke(prompt).content[:800]
+    #     return {"refined": improved, "based_on": analysis}
 
     def technical_analysis(self, data):
         """Technical analysis based on price movement"""
@@ -302,16 +328,21 @@ class AnalysisAgent:
     
     def fundamental_analysis(self, data):
         """Fundamental analysis based on PE ratio"""
+
         pe = data.get('pe_ratio', 0)
-        
-        if 0 < pe < 15:
-            valuation = "Undervalued"
-        elif pe > 30:
-            valuation = "Overvalued"
-        else:
-            valuation = "Fair value"
-        
-        return {"type": "fundamental", "valuation": valuation, "pe_ratio": pe}
+        mc = data.get('market_cap', 0)
+        ch = data.get('change', 0)
+        if 0 < pe < 15: valuation = "Undervalued"
+        elif pe > 30:  valuation = "Overvalued"
+        else:          valuation = "Fair value"
+        return {
+            "type": "fundamental",
+            "valuation": valuation,
+            "pe_ratio": pe,
+            "market_cap": mc,
+            "recent_change_pct": ch
+    }
+
     
     # ReportAgent
     def self_evaluate(self, report):
@@ -388,27 +419,23 @@ class ReportAgent:
         return [r.strip() for r in risks[:2] if r.strip()]
     
     def self_evaluate(self, report):
-        """Self-reflection on report quality"""
+        # keep your heuristic score...
         score = 0
-        
-        # Check if summary exists and is meaningful
-        if report.get('summary') and len(report['summary']) > 50:
-            score += 3
-        
-        # Check if recommendation is clear
-        recommendation = report.get('recommendation', '')
-        if 'BUY' in recommendation or 'SELL' in recommendation or 'HOLD' in recommendation:
-            score += 3
-        
-        # Check if risks are identified
-        if report.get('risks') and len(report['risks']) >= 2:
-            score += 2
-        
-        # Check if data is complete
-        if report.get('data_overview', {}).get('current_price') != '$0':
-            score += 2
-    
-        return min(score, 10)  # Max score 10
+        if report.get('summary') and len(report['summary']) > 50: score += 3
+        rec = (report.get('recommendation') or "")
+        if any(k in rec for k in ("BUY","SELL","HOLD")): score += 3
+        if report.get('risks') and len(report['risks']) >= 2: score += 2
+        if report.get('data_overview',{}).get('current_price') != '$0': score += 2
+        score = min(score, 10)
+
+        # Optional LLM critique to show evaluator transparency
+        critique = self.llm.invoke(
+            f"Briefly critique this report (1–2 sentences) for completeness and evidence: {report}"
+        ).content[:240]
+        report["critique"] = critique
+        return score
+
+
 
 
 class OrchestratorAgent:
@@ -443,6 +470,7 @@ class OrchestratorAgent:
         
         # Execute data collection
         stock_data = self.data_agent.collect_stock_data(symbol)
+        
         news_data = self.data_agent.collect_news(symbol)
         
         # Perform analysis
@@ -457,7 +485,7 @@ class OrchestratorAgent:
 
         # OrchestratorAgent.execute_research (end of method, before return)
         improvement_prompt = f"Given this report, suggest one short 'next_time_focus' note to improve the next analysis for {symbol}."
-        next_focus = self.llm.invoke(improvement_prompt).content.strip()[:140]
+        next_focus = self.llm.invoke(improvement_prompt).content.strip()[:500]
         save_notes(symbol, {"next_time_focus": next_focus})
 
         return {
