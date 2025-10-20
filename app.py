@@ -64,44 +64,16 @@ def main():
             price_chart(symbol)
 
             # Show multi-article chain
-            st.subheader("News Chain (Ingest → Preprocess → Classify → Extract → Summarize)")
-            st.write(f"**Articles ({news_data['news_count']}):**")
-            for i, t in enumerate(news_data["news"], 1):
-                st.write(f"{i}. {t}")
-            st.write("**Per-item classifications:**", news_data.get("per_item_classifications", []))
-            st.write("**Key infos:**", [k[:140] for k in news_data.get("key_info", [])])
-            st.write("**Aggregate sentiment:**", news_data["classification"])
-            st.info(f"**Summary:** {news_data['summary']}")
+            # st.subheader("News Chain (Ingest → Preprocess → Classify → Extract → Summarize)")
+            # st.write(f"**Articles ({news_data['news_count']}):**")
+            # for i, t in enumerate(news_data["news"], 1):
+            #     st.write(f"{i}. {t}")
+            # st.write("**Per-item classifications:**", news_data.get("per_item_classifications", []))
+            # st.write("**Key infos:**", [k[:140] for k in news_data.get("key_info", [])])
+            # st.write("**Aggregate sentiment:**", news_data["classification"])
+            # st.info(f"**Summary:** {news_data['summary']}")
 
-            # Routing + Eval/Optimize visibility
-            st.subheader("Routing & Evaluator–Optimizer")
-            st.write("**Routed to:**", analysis['routed_to'])
-            st.write("**Initial analysis:**", analysis['initial_analysis'])
-            opt = analysis.get("optimized_analysis", {})
-            st.write("Evaluation:", opt.get("evaluation", ""))
-
-            final_opt = opt.get("final", {})
-            refined_text = final_opt.get("refined_text") if isinstance(final_opt, dict) else None
-
-            if refined_text:
-                st.info(refined_text)   # show once, nicely
-            else:
-                st.json(final_opt)      # or st.write(...) if it’s plain text
-
-
-
-            # Show refined text when present
-            if isinstance(final_opt, dict) and "refined_text" in final_opt:
-                st.info(final_opt["refined_text"])
-            else:
-                st.write(final_opt)
-
-
-            # Memory
-            if 'memory' in locals() or 'memory' in report:
-                pass  # orchestrator path returns memory; in this app you wire orchestrator later if you use it
-
-
+            st.subheader("Detailed Report")
             # Three columns for main info
             col1, col2, col3 = st.columns(3)
             
@@ -145,15 +117,36 @@ def main():
                 
                 st.write("\n**2. Routing (Analysis):**")
                 st.write(f"• Routed to: {analysis['routed_to']} specialist")
+                st.write("**Initial analysis:**", analysis['initial_analysis'])
                 
                 st.write("\n**3. Evaluator-Optimizer:**")
-                if 'evaluation' in analysis['optimized_analysis']:
-                    st.write(f"• {analysis['optimized_analysis']['evaluation'][:150]}...")
-                
+                opt = analysis.get("optimized_analysis", {})
+                st.write("Evaluation:", opt.get("evaluation", ""))
+
+                final_opt = opt.get("final", {})
+                refined_text = final_opt.get("refined_text") if isinstance(final_opt, dict) else None
+
+                if refined_text:
+                    st.info(refined_text)   # show once, nicely
+                else:
+                    st.json(final_opt)      # or st.write(...) if it’s plain text
+
+                # Show refined text when present
+                if isinstance(final_opt, dict) and "refined_text" in final_opt:
+                    st.info(final_opt["refined_text"])
+                else:
+                    st.write(final_opt)
+
+
+                # Memory
+                if 'memory' in locals() or 'memory' in report:
+                    pass  # orchestrator path returns memory; in this app you wire orchestrator later if you use it
+
+
                 st.write("\n**4. Self-Reflection:**")
                 st.write(f"• Data Quality: {stock_data['reflection']}")
                 st.write(f"• Report Score: {report['quality_score']}/10")
-
+            
             with st.expander("🧾 Full Report JSON"):
                 st.json(report)
                 st.json(stock_data)
