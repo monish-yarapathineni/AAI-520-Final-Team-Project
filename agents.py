@@ -39,7 +39,7 @@ class DataAgent:
             data['reflection'] = reflection
             return data
             
-        except:
+        except (requests.RequestException, KeyError, IndexError, ValueError):
             return {
                 "symbol": symbol, 
                 "price": 0, 
@@ -91,7 +91,7 @@ class DataAgent:
                 data = response.json()
                 if data.get('articles'):
                     return data['articles'][0].get('title', f"{symbol} shows growth")
-        except:
+        except Exception:
             print("Error fetching news")
         return f"{symbol} reports strong quarterly earnings and positive outlook"
 
